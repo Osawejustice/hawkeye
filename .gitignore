@@ -1,0 +1,34 @@
+# Binaries
+bin/
+tmp/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/cohi-api
+
+# Tests / coverage
+coverage.out
+coverage.html
+*.test
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Air hot-reload
+tmp/
+
+# Docker
+docker-data/

@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cohi-postgres
+    environment:
+      POSTGRES_USER: cohi
+      POSTGRES_PASSWORD: cohi
+      POSTGRES_DB: cohi
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cohi -d cohi"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: cohi-mediamtx
+    volumes:
+      - ./deployments/mediamtx.yml:/mediamtx.yml:ro
+    ports:
+      - "8554:8554"   # RTSP
+      - "8888:8888"   # HLS
+      - "8889:8889"   # WebRTC / WHEP
+      - "8189:8189/udp"
+      - "9996:9996"   # playback
+      - "9997:9997"   # Control API
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cohi-api
+    environment:
+      APP_ENV: development
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: 8080
+      JWT_ACCESS_SECRET: local-dev-access-secret-change-me-32b
+      JWT_REFRESH_SECRET: local-dev-refresh-secret-change-me-32
+      DATABASE_URL: postgres://cohi:cohi@postgres:5432/cohi?sslmode=disable
+      AUTO_MIGRATE: "true"
+      MIGRATIONS_PATH: /app/migrations
+      MEDIAMTX_ENABLED: "true"
+      MEDIAMTX_API_URL: http://mediamtx:9997
+      MEDIAMTX_RTSP_URL: rtsp://localhost:8554
+      MEDIAMTX_HLS_URL: http://localhost:8888
+      MEDIAMTX_WEBRTC_URL: http://localhost:8889
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mediamtx:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

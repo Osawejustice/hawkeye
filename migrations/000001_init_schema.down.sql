@@ -1,0 +1,9 @@
+BEGIN;
+
+DROP TABLE IF EXISTS recording_segments;
+DROP TABLE IF EXISTS cameras;
+DROP TABLE IF EXISTS refresh_tokens;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS organizations;
+
+COMMIT;

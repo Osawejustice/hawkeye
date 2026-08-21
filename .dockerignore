@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+tmp
+bin
+dist
+coverage.out
+coverage.html
+*.md
+!README.md
+.idea
+.vscode
+.DS_Store
+docker-data
+references

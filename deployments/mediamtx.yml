@@ -1,0 +1,55 @@
+# Local MediaMTX configuration for the Cohi stack.
+# Control API is open on the Docker network so cohi-api can add/remove paths.
+
+logLevel: info
+logDestinations: [stdout]
+
+api: yes
+apiAddress: :9997
+apiAllowOrigins: ["*"]
+
+metrics: no
+pprof: no
+
+playback: yes
+playbackAddress: :9996
+
+rtsp: yes
+rtspAddress: :8554
+
+rtmp: no
+
+hls: yes
+hlsAddress: :8888
+hlsAllowOrigins: ["*"]
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigins: ["*"]
+webrtcLocalUDPAddress: :8189
+
+# Local-dev auth: allow publish/read/playback/api from any IP.
+# Tighten this before exposing the stack beyond localhost.
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+      - action: api
+      - action: metrics
+
+# Paths are created dynamically by cohi-api via the Control API.
+pathDefaults:
+  sourceOnDemand: yes
+  sourceOnDemandStartTimeout: 10s
+  sourceOnDemandCloseAfter: 10s
+  record: no
+  recordPath: ./recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+  recordFormat: fmp4
+  recordSegmentDuration: 10m
+
+paths: {}
