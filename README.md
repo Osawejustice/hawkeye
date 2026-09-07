@@ -2,6 +2,7 @@
 
 Control plane for **Cohi / HawkEye** — a self-hostable video surveillance platform.
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https%3A%2F%2Fgithub.com%2FOsawejustice%2Fhawkeye&plugins=postgresql&envs=APP_ENV%2CAUTO_MIGRATE%2CJWT_ACCESS_SECRET%2CJWT_REFRESH_SECRET%2CINTERNAL_SERVICE_TOKEN%2CMEDIAMTX_ENABLED&APP_ENVDefault=production&AUTO_MIGRATEDefault=true&MEDIAMTX_ENABLEDDefault=false)
 [![test](https://github.com/Osawejustice/hawkeye/actions/workflows/test.yml/badge.svg)](https://github.com/Osawejustice/hawkeye/actions/workflows/test.yml)
 
 This service is the source of truth for users, organizations, cameras, and recording metadata. It talks to [MediaMTX](https://github.com/bluenviron/mediamtx) over its Control API to project camera records onto live paths (RTSP ingest, HLS / WebRTC egress).

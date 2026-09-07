@@ -1,0 +1,30 @@
+name: Deploy Railway
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Install IaC SDK
+        run: npm install railway
+
+      - name: Apply full stack
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "Set GitHub Actions secret RAILWAY_TOKEN (Railway project or account token)."
+            exit 1
+          fi
+          railway config apply --yes

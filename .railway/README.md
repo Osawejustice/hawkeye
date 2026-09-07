@@ -1,25 +1,14 @@
 # Railway infrastructure (Cohi)
 
-This file describes the **whole** project: Postgres + MediaMTX + `cohi-api` + `cohi-worker`.
+One file for the whole project: Postgres + MediaMTX + `cohi-api` + `cohi-worker`.
 
-`railway.toml` / `railway.json` only configure a single service. They cannot create the API next to Postgres. Use this graph instead, or add the services in the dashboard (see the repo README).
-
-## Apply (needs Railway CLI login)
+Worker and MediaMTX select their image with `RAILWAY_DOCKERFILE_PATH` (same GitHub repo, different Dockerfiles). JWT / service tokens use `${{secret()}}` so a template deploy generates them.
 
 ```bash
 npm install railway
 railway login
-railway link          # choose project upbeat-success / production
-railway config plan
+railway link
 railway config apply
 ```
 
-Then set Dockerfile paths (same GitHub repo, different images):
-
-| Service | Dockerfile path |
-| --- | --- |
-| `cohi-api` | `Dockerfile` (default) |
-| `cohi-worker` | `Dockerfile.worker` |
-| `mediamtx` | `Dockerfile.mediamtx` |
-
-Paste JWT secrets on `cohi-api` and `cohi-worker` from `deploy/railway.variables.env`. Generate a public domain on `cohi-api`.
+Or GitHub → Actions → **Deploy Railway** (needs repo secret `RAILWAY_TOKEN`).

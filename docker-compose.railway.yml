@@ -1,0 +1,91 @@
+# Full Cohi stack for Railway.
+#
+# One-shot: New Project → Empty project → drag this file onto the canvas → Deploy.
+# https://docs.railway.com/guides/dockerfiles (Compose import)
+#
+# Local: docker compose -f docker-compose.railway.yml up --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cohi
+      POSTGRES_PASSWORD: cohi
+      POSTGRES_DB: cohi
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cohi -d cohi"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  mediamtx:
+    build:
+      context: .
+      dockerfile: Dockerfile.mediamtx
+    volumes:
+      - recordings_data:/recordings
+    ports:
+      - "8554:8554"
+      - "8888:8888"
+      - "8889:8889"
+      - "9996:9996"
+      - "9997:9997"
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      APP_ENV: production
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: "8080"
+      AUTO_MIGRATE: "true"
+      MIGRATIONS_PATH: /app/migrations
+      CORS_ALLOWED_ORIGINS: "*"
+      DATABASE_URL: postgres://cohi:cohi@postgres:5432/cohi?sslmode=disable
+      JWT_ACCESS_SECRET: replace-me-jwt-access-secret-min-32-chars!!
+      JWT_REFRESH_SECRET: replace-me-jwt-refresh-secret-min-32-chars!
+      INTERNAL_SERVICE_TOKEN: replace-me-internal-service-token-32b
+      MEDIAMTX_ENABLED: "true"
+      MEDIAMTX_API_URL: http://mediamtx:9997
+      MEDIAMTX_PLAYBACK_URL: http://mediamtx:9996
+      MEDIAMTX_RTSP_URL: rtsp://mediamtx:8554
+      MEDIAMTX_HLS_URL: http://mediamtx:8888
+      MEDIAMTX_WEBRTC_URL: http://mediamtx:8889
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mediamtx:
+        condition: service_started
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      APP_ENV: production
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: "8081"
+      COHI_API_URL: http://api:8080
+      INTERNAL_SERVICE_TOKEN: replace-me-internal-service-token-32b
+      WORKER_POLL_INTERVAL: 15s
+      MEDIAMTX_ENABLED: "true"
+      MEDIAMTX_API_URL: http://mediamtx:9997
+      MEDIAMTX_PLAYBACK_URL: http://mediamtx:9996
+    depends_on:
+      api:
+        condition: service_started
+      mediamtx:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  recordings_data:
