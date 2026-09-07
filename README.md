@@ -19,7 +19,7 @@ This service is the source of truth for users, organizations, cameras, and recor
 - PostgreSQL schema via golang-migrate (soft deletes, multi-tenancy-ready `organization_id`)
 - Health / readiness probes
 - Production multi-stage Dockerfile (api + worker targets) and local docker-compose (Postgres + MediaMTX + demo source + API + worker)
-- Railway one-click / GitHub auto-deploy (`railway.toml`, production secrets, Postgres)
+- Railway deploy: button (API+Postgres), Compose drop, or GitHub Action IaC (full stack)
 
 ## Requirements
 
@@ -233,9 +233,10 @@ internal/repository/        persistence
 internal/service/           business logic
 migrations/                 SQL (golang-migrate)
 deployments/mediamtx.yml    local MediaMTX config
-deploy/railway.variables.env  production env paste for Railway
-railway.toml / railway.json Railway config-as-code
-.github/workflows/          CI (go test / vet)
+deploy/                      Railway variable paste files
+docker-compose.railway.yml  full-stack import for Railway canvas
+.railway/railway.ts         Railway IaC (Postgres + API + MTX + worker)
+.github/workflows/          test + Deploy Railway
 ```
 
 ## Auth design
@@ -245,67 +246,31 @@ railway.toml / railway.json Railway config-as-code
 - Rotation on every refresh; reuse of a revoked token invalidates the whole family
 - Passwords: bcrypt cost 12
 
-## Deploy on Railway (fresh project)
+## Deploy on Railway
 
-Do **not** start from “Deploy PostgreSQL” or a `plugins=postgresql` button. That only creates the database. Create an **empty project**, then add all four services onto the same canvas.
+A `plugins=postgresql` link only creates the database. Four services become a real **Deploy** button only after they exist as a Railway template (option D). Until then use A, B, or C.
 
-| Service | Source | Role |
-| --- | --- | --- |
-| **Postgres** | Railway → Database | metadata |
-| **cohi-api** | GitHub `hawkeye` / `Dockerfile` | control plane |
-| **mediamtx** | same repo / `Dockerfile.mediamtx` | live + recording |
-| **cohi-worker** | same repo / `Dockerfile.worker` | indexes segments |
+### A. Button — API + Postgres
 
-PostgreSQL only. MySQL is not supported. Delete the old `upbeat-success` project if you no longer need it (trial usage).
+The badge at the top of this README. Same pattern as Ghost/n8n: one GitHub service + Postgres plugin. Fill JWT secrets in the form. If `DATABASE_URL` is empty after deploy, set `DATABASE_URL=${{Postgres.DATABASE_URL}}` and generate a domain on the API.
 
-### 1. Empty project + Postgres
+### B. Full stack — drop Compose
 
-1. [railway.com/new](https://railway.com/new) → **Empty project**.
-2. Name it `cohi` (or anything except a database-only template).
-3. **+ New → Database → PostgreSQL**. Wait until it is **Online**. Leave it unexposed.
+1. [Empty project](https://railway.com/new) (not “PostgreSQL”).
+2. Drag [`docker-compose.railway.yml`](docker-compose.railway.yml) onto the canvas → Deploy.
+3. Rotate the `replace-me-*` secrets in Variables.
 
-### 2. API (required for tonight)
+### C. Full stack — GitHub Action
 
-1. **+ New → GitHub Repo** → `Osawejustice/hawkeye` (`main`).
-2. Rename the service to **`cohi-api`**.
-3. Build: Dockerfile path `Dockerfile` (default, final stage is `api`).
-4. **Variables → Raw Editor** — paste [deploy/railway.variables.env](deploy/railway.variables.env) with the three secrets filled:
+1. Empty Railway project → copy a **project token** into GitHub secret `RAILWAY_TOKEN`.
+2. **Actions → Deploy Railway → Run workflow**.
+3. Applies [`.railway/railway.ts`](.railway/railway.ts): Postgres, API, MediaMTX, worker. Dockerfiles are selected with `RAILWAY_DOCKERFILE_PATH`; tokens use `${{secret()}}`.
 
-```bash
-openssl rand -base64 48   # JWT_ACCESS_SECRET
-openssl rand -base64 48   # JWT_REFRESH_SECRET
-openssl rand -base64 32   # INTERNAL_SERVICE_TOKEN
-```
+### D. Permanent 4-service button
 
-   Keep `DATABASE_URL=${{Postgres.DATABASE_URL}}` as a reference. Railway’s Postgres service is named `Postgres`.
-5. **Settings → Networking → Generate Domain**.
-6. Deploy. Probe is `GET /health`. Migrations run on boot.
+After B or C works: project **Settings → Generate Template from Project**. Put the resulting `https://railway.com/new/template/<code>` on the badge. That is the one-click for the entire infra.
 
-```bash
-curl https://<cohi-api>.up.railway.app/health
-curl -sS -X POST https://<cohi-api>.up.railway.app/api/v1/auth/register \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"ops@example.com","password":"correct-horse","name":"Ops"}'
-```
-
-Leave `MEDIAMTX_ENABLED=false` until step 3. Camera CRUD still works.
-
-### 3. MediaMTX + worker (full infra)
-
-**mediamtx**
-
-1. **+ New → GitHub Repo** → same `hawkeye` repo. Name it **`mediamtx`**.
-2. **Settings → Build → Dockerfile path** = `Dockerfile.mediamtx`.
-3. **Settings → Volumes** → add volume, mount `/recordings`.
-4. On `cohi-api`, set `MEDIAMTX_ENABLED=true` and uncomment the `MEDIAMTX_*` lines in `deploy/railway.variables.env`. Redeploy the API.
-
-**cohi-worker**
-
-1. **+ New → GitHub Repo** → same repo. Name it **`cohi-worker`**.
-2. Dockerfile path = `Dockerfile.worker`.
-3. Paste [deploy/railway.worker.variables.env](deploy/railway.worker.variables.env). Use the **same** `INTERNAL_SERVICE_TOKEN` as the API.
-
-The same graph is in [`.railway/railway.ts`](.railway/railway.ts) (`railway link` → `railway config apply`) if you prefer CLI over the canvas.
+PostgreSQL only. Delete `upbeat-success` if it is only a leftover database.
 
 ## recording-worker
 
