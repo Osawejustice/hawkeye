@@ -1,0 +1,41 @@
+# MediaMTX on Railway. Control API is reachable on the private network
+# (http://mediamtx.railway.internal:9997) from cohi-api and cohi-worker.
+logLevel: info
+logDestinations: [stdout]
+
+api: yes
+apiAddress: :9997
+apiAllowOrigins: ["*"]
+
+playback: yes
+playbackAddress: :9996
+
+rtsp: yes
+rtspAddress: :8554
+
+hls: yes
+hlsAddress: :8888
+hlsAllowOrigins: ["*"]
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigins: ["*"]
+webrtcLocalUDPAddress: :8189
+
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+      - action: api
+
+pathDefaults:
+  sourceOnDemand: no
+  record: no
+  recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+  recordFormat: fmp4
+  recordSegmentDuration: 1m

@@ -1,0 +1,4 @@
+# syntax=docker/dockerfile:1
+# Railway: same GitHub repo, Settings → Build → Dockerfile path = Dockerfile.mediamtx
+FROM bluenviron/mediamtx:latest
+COPY deployments/mediamtx.railway.yml /mediamtx.yml

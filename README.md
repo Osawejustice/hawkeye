@@ -2,7 +2,6 @@
 
 Control plane for **Cohi / HawkEye** — a self-hostable video surveillance platform.
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https://github.com/Osawejustice/hawkeye&plugins=postgresql)
 [![test](https://github.com/Osawejustice/hawkeye/actions/workflows/test.yml/badge.svg)](https://github.com/Osawejustice/hawkeye/actions/workflows/test.yml)
 
 This service is the source of truth for users, organizations, cameras, and recording metadata. It talks to [MediaMTX](https://github.com/bluenviron/mediamtx) over its Control API to project camera records onto live paths (RTSP ingest, HLS / WebRTC egress).
@@ -247,17 +246,25 @@ railway.toml / railway.json Railway config-as-code
 
 ## Deploy on Railway
 
-This repo is a Railway template in the same shape as a one-click Docker template: a production Dockerfile, `railway.toml` / `railway.json`, and PostgreSQL as the only datastore.
+The old **Deploy on Railway** button with `plugins=postgresql` only created the database. That is expected: a Postgres plugin is not the API. The full stack is **four services in one project**.
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https://github.com/Osawejustice/hawkeye&plugins=postgresql)
+| Service | Source | Role |
+| --- | --- | --- |
+| **Postgres** | Railway database | metadata (you already have this in `upbeat-success`) |
+| **cohi-api** | this GitHub repo / `Dockerfile` | control plane (auth, cameras, recordings index) |
+| **mediamtx** | this repo / `Dockerfile.mediamtx` | live + recording |
+| **cohi-worker** | this repo / `Dockerfile.worker` | indexes segments, heartbeats |
 
 PostgreSQL only. MySQL is not supported.
 
-### One-click
+### Right now: add the API to the existing Postgres project
 
-1. Click **Deploy on Railway**.
-2. Railway provisions PostgreSQL and builds this Dockerfile (final stage = `api`).
-3. Open the `cohi-api` service → **Variables** and paste [deploy/railway.variables.env](deploy/railway.variables.env). Fill the three secrets:
+You already have **Postgres Online** in `upbeat-success` / `production`. Stay in that project. Do **not** create another database.
+
+1. Click **+ New** (left rail) → **GitHub Repo** → `Osawejustice/hawkeye` (`main`).
+2. Rename the new service to `cohi-api`.
+3. **Settings → Build**: Dockerfile path `Dockerfile` (default). Railway uses the final `api` stage.
+4. **Variables → Raw Editor**, paste [deploy/railway.variables.env](deploy/railway.variables.env) after filling:
 
 ```bash
 openssl rand -base64 48   # JWT_ACCESS_SECRET
@@ -265,29 +272,41 @@ openssl rand -base64 48   # JWT_REFRESH_SECRET
 openssl rand -base64 32   # INTERNAL_SERVICE_TOKEN
 ```
 
-4. Set `DATABASE_URL` to the reference `${{Postgres.DATABASE_URL}}` (already in the paste file).
-5. Generate a public domain on the service. Health check is `GET /health`.
-6. After ~1 minute the API is up. Migrations run on boot (`AUTO_MIGRATE=true`).
+   `DATABASE_URL=${{Postgres.DATABASE_URL}}` must stay as a **reference** (the Postgres service on your canvas is already named `Postgres`).
+5. **Settings → Networking → Generate Domain**.
+6. Deploy. `GET /health` is the probe. Migrations run on boot.
 
 ```bash
-curl https://<your-service>.up.railway.app/health
-curl -sS -X POST https://<your-service>.up.railway.app/api/v1/auth/register \
+curl https://<cohi-api>.up.railway.app/health
+curl -sS -X POST https://<cohi-api>.up.railway.app/api/v1/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"email":"ops@example.com","password":"correct-horse","name":"Ops"}'
 ```
 
-### Deploy from this GitHub repo (recommended for Cohi)
+Until MediaMTX is added, leave `MEDIAMTX_ENABLED=false`. Camera CRUD still works (`mtx_sync_status: skipped`).
 
-1. Push `main` to GitHub (this repository).
-2. Railway dashboard → **New Project** → **GitHub Repo** → `hawkeye`.
-3. Railway detects the Dockerfile and `railway.toml`.
-4. **+ New** → **Database** → **PostgreSQL**.
-5. On the API service, add the variables from [deploy/railway.variables.env](deploy/railway.variables.env).
-6. Enable a public domain. Subsequent pushes to `main` auto-deploy.
+### Rest of infra (same project)
 
-MediaMTX is **not** part of this Railway service. Live ingest / playback stay on the local compose stack (or a later media-server service). In production, localhost MediaMTX URLs are disabled automatically so camera CRUD still works (`mtx_sync_status: skipped`).
+**MediaMTX**
 
-If you already have a Railway Postgres (or any Postgres 16), skip step 4 and set `DATABASE_URL` to that instance. Do not point this API at MySQL.
+1. **+ New → GitHub Repo** → same `hawkeye` repo. Name the service `mediamtx`.
+2. **Settings → Build → Dockerfile path** = `Dockerfile.mediamtx`.
+3. **Settings → Volumes** → mount `recordings-data` at `/recordings`.
+4. On `cohi-api`, set `MEDIAMTX_ENABLED=true` and the `MEDIAMTX_*` URLs in `deploy/railway.variables.env`.
+
+**Worker**
+
+1. **+ New → GitHub Repo** → same repo. Name it `cohi-worker`.
+2. **Dockerfile path** = `Dockerfile.worker`.
+3. Paste [deploy/railway.worker.variables.env](deploy/railway.worker.variables.env). Use the **same** `INTERNAL_SERVICE_TOKEN` as the API.
+
+The graph also lives in [`.railway/railway.ts`](.railway/railway.ts) so the whole environment can be planned with `railway config plan` / `apply` after `railway link`.
+
+### New empty project (from scratch)
+
+1. Railway → **New Project → Empty project** (or GitHub repo — not “PostgreSQL” alone).
+2. **+ New → Database → PostgreSQL**.
+3. Follow “add the API” above.
 
 ## recording-worker
 

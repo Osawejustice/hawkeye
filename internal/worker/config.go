@@ -44,6 +44,15 @@ func LoadConfig() (*Config, error) {
 	if port := os.Getenv("PORT"); port != "" {
 		cfg.HTTPPort = port
 	}
+	if os.Getenv("RAILWAY_ENVIRONMENT") != "" && os.Getenv("APP_ENV") == "" {
+		cfg.AppEnv = "production"
+	}
+	api := strings.ToLower(cfg.MediaMTX.APIURL)
+	if strings.EqualFold(cfg.AppEnv, "production") || strings.EqualFold(cfg.AppEnv, "prod") {
+		if cfg.MediaMTX.Enabled && (strings.Contains(api, "localhost") || strings.Contains(api, "127.0.0.1")) {
+			cfg.MediaMTX.Enabled = false
+		}
+	}
 	if cfg.APIURL == "" {
 		return nil, fmt.Errorf("COHI_API_URL is required")
 	}
