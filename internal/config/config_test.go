@@ -7,6 +7,8 @@ import (
 
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("APP_ENV", "development")
+	t.Setenv("RAILWAY_ENVIRONMENT", "")
+	t.Setenv("RAILWAY_PROJECT_ID", "")
 	t.Setenv("JWT_ACCESS_SECRET", "")
 	t.Setenv("JWT_REFRESH_SECRET", "")
 	t.Setenv("PORT", "")
@@ -51,5 +53,57 @@ func TestProductionRequiresSecrets(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("expected production secret validation error")
+	}
+}
+
+func TestProductionRequiresServiceToken(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("JWT_ACCESS_SECRET", "production-access-secret-min-32-chars!!")
+	t.Setenv("JWT_REFRESH_SECRET", "production-refresh-secret-min-32-chars!")
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "")
+	t.Setenv("DATABASE_URL", "postgres://cohi:cohi@localhost:5432/cohi?sslmode=disable")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected missing INTERNAL_SERVICE_TOKEN error")
+	}
+}
+
+func TestRailwayImpliesProduction(t *testing.T) {
+	t.Setenv("APP_ENV", "")
+	t.Setenv("RAILWAY_ENVIRONMENT", "production")
+	t.Setenv("JWT_ACCESS_SECRET", "short")
+	t.Setenv("JWT_REFRESH_SECRET", "short")
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "")
+	t.Setenv("DATABASE_URL", "postgres://cohi:cohi@localhost:5432/cohi?sslmode=disable")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected Railway deploys to require production secrets")
+	}
+}
+
+func TestProductionDisablesLocalhostMediaMTX(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("JWT_ACCESS_SECRET", "production-access-secret-min-32-chars!!")
+	t.Setenv("JWT_REFRESH_SECRET", "production-refresh-secret-min-32-chars!")
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "production-internal-token-min-32-chars!")
+	t.Setenv("DATABASE_URL", "postgres://cohi:cohi@localhost:5432/cohi?sslmode=disable")
+	t.Setenv("MEDIAMTX_ENABLED", "true")
+	t.Setenv("MEDIAMTX_API_URL", "http://localhost:9997")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MediaMTX.Enabled {
+		t.Fatal("localhost MediaMTX should be disabled in production")
+	}
+}
+
+func TestRejectsMySQL(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", "mysql://user:pass@localhost:3306/cohi")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected MySQL DATABASE_URL to be rejected")
 	}
 }

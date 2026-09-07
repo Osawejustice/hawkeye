@@ -27,6 +27,7 @@ webrtc: yes
 webrtcAddress: :8889
 webrtcAllowOrigins: ["*"]
 webrtcLocalUDPAddress: :8189
+webrtcAdditionalHosts: [localhost, 127.0.0.1]
 
 # Local-dev auth: allow publish/read/playback/api from any IP.
 # Tighten this before exposing the stack beyond localhost.
@@ -42,14 +43,17 @@ authInternalUsers:
       - action: api
       - action: metrics
 
-# Paths are created dynamically by cohi-api via the Control API.
 pathDefaults:
-  sourceOnDemand: yes
-  sourceOnDemandStartTimeout: 10s
-  sourceOnDemandCloseAfter: 10s
+  sourceOnDemand: no
   record: no
-  recordPath: ./recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+  recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
   recordFormat: fmp4
-  recordSegmentDuration: 10m
+  recordSegmentDuration: 1m
 
-paths: {}
+# Built-in test pattern is published here by the compose "demo" service.
+# Add a camera in cohi with rtsp://127.0.0.1:8554/demo to view it.
+paths:
+  demo:
+    source: publisher
+    sourceOnDemand: no
+    record: no

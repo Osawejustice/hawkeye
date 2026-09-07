@@ -35,6 +35,8 @@ type Config struct {
 	JWTRefreshTTL    time.Duration
 	JWTIssuer        string
 
+	InternalServiceToken string
+
 	MediaMTX MediaMTXConfig
 }
 
@@ -45,9 +47,10 @@ type MediaMTXConfig struct {
 	APIUser    string
 	APIPass    string
 	Timeout    time.Duration
-	RTSPURL    string
-	HLSURL     string
-	WebRTCURL  string
+	RTSPURL      string
+	HLSURL       string
+	WebRTCURL    string
+	PlaybackURL  string
 }
 
 // Load reads configuration from environment variables and applies defaults.
@@ -78,21 +81,34 @@ func Load() (*Config, error) {
 		JWTRefreshTTL:    getenvDuration("JWT_REFRESH_TTL", 7*24*time.Hour),
 		JWTIssuer:        getenv("JWT_ISSUER", "cohi-api"),
 
+		InternalServiceToken: os.Getenv("INTERNAL_SERVICE_TOKEN"),
+
 		MediaMTX: MediaMTXConfig{
-			Enabled:   getenvBool("MEDIAMTX_ENABLED", true),
-			APIURL:    strings.TrimRight(getenv("MEDIAMTX_API_URL", "http://localhost:9997"), "/"),
-			APIUser:   os.Getenv("MEDIAMTX_API_USER"),
-			APIPass:   os.Getenv("MEDIAMTX_API_PASS"),
-			Timeout:   getenvDuration("MEDIAMTX_TIMEOUT", 8*time.Second),
-			RTSPURL:   strings.TrimRight(getenv("MEDIAMTX_RTSP_URL", "rtsp://localhost:8554"), "/"),
-			HLSURL:    strings.TrimRight(getenv("MEDIAMTX_HLS_URL", "http://localhost:8888"), "/"),
-			WebRTCURL: strings.TrimRight(getenv("MEDIAMTX_WEBRTC_URL", "http://localhost:8889"), "/"),
+			Enabled:     getenvBool("MEDIAMTX_ENABLED", true),
+			APIURL:      strings.TrimRight(getenv("MEDIAMTX_API_URL", "http://localhost:9997"), "/"),
+			APIUser:     os.Getenv("MEDIAMTX_API_USER"),
+			APIPass:     os.Getenv("MEDIAMTX_API_PASS"),
+			Timeout:     getenvDuration("MEDIAMTX_TIMEOUT", 8*time.Second),
+			RTSPURL:     strings.TrimRight(getenv("MEDIAMTX_RTSP_URL", "rtsp://localhost:8554"), "/"),
+			HLSURL:      strings.TrimRight(getenv("MEDIAMTX_HLS_URL", "http://localhost:8888"), "/"),
+			WebRTCURL:   strings.TrimRight(getenv("MEDIAMTX_WEBRTC_URL", "http://localhost:8889"), "/"),
+			PlaybackURL: strings.TrimRight(getenv("MEDIAMTX_PLAYBACK_URL", "http://localhost:9996"), "/"),
 		},
 	}
 
 	// Cloud platforms (Railway, Fly, Render, etc.) inject PORT.
 	if port := os.Getenv("PORT"); port != "" {
 		cfg.HTTPPort = port
+	}
+
+	// Railway always injects RAILWAY_ENVIRONMENT. Treat that as production
+	// unless APP_ENV was set explicitly, so we never boot with the
+	// well-known development JWT secrets.
+	if runningOnRailway() && os.Getenv("APP_ENV") == "" {
+		cfg.AppEnv = "production"
+		if os.Getenv("LOG_FORMAT") == "" {
+			cfg.LogFormat = "json"
+		}
 	}
 
 	if err := cfg.normalizeAndValidate(); err != nil {
@@ -107,6 +123,10 @@ func (c *Config) normalizeAndValidate() error {
 	}
 	if c.DatabaseURL == "" {
 		return fmt.Errorf("DATABASE_URL is required")
+	}
+	dbURL := strings.ToLower(c.DatabaseURL)
+	if strings.HasPrefix(dbURL, "mysql:") || strings.HasPrefix(dbURL, "mysql2:") {
+		return fmt.Errorf("DATABASE_URL must be PostgreSQL (postgres:// or postgresql://); MySQL is not supported")
 	}
 	if c.JWTAccessTTL <= 0 {
 		return fmt.Errorf("JWT_ACCESS_TTL must be positive")
@@ -125,12 +145,25 @@ func (c *Config) normalizeAndValidate() error {
 		if len(c.JWTRefreshSecret) < 32 {
 			return fmt.Errorf("JWT_REFRESH_SECRET must be at least 32 characters in production")
 		}
+		if c.InternalServiceToken == "" {
+			return fmt.Errorf("INTERNAL_SERVICE_TOKEN is required in production")
+		}
 	} else {
 		if c.JWTAccessSecret == "" {
 			c.JWTAccessSecret = "dev-only-access-secret-change-me-32b"
 		}
 		if c.JWTRefreshSecret == "" {
 			c.JWTRefreshSecret = "dev-only-refresh-secret-change-me-32"
+		}
+		if c.InternalServiceToken == "" {
+			c.InternalServiceToken = "local-dev-internal-token"
+		}
+	}
+
+	if c.IsProduction() {
+		api := strings.ToLower(c.MediaMTX.APIURL)
+		if c.MediaMTX.Enabled && (strings.Contains(api, "localhost") || strings.Contains(api, "127.0.0.1")) {
+			c.MediaMTX.Enabled = false
 		}
 	}
 
@@ -139,6 +172,10 @@ func (c *Config) normalizeAndValidate() error {
 	}
 
 	return nil
+}
+
+func runningOnRailway() bool {
+	return os.Getenv("RAILWAY_ENVIRONMENT") != "" || os.Getenv("RAILWAY_PROJECT_ID") != ""
 }
 
 // Addr returns the HTTP bind address.

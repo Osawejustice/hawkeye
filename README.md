@@ -2,6 +2,9 @@
 
 Control plane for **Cohi / HawkEye** — a self-hostable video surveillance platform.
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https://github.com/Osawejustice/hawkeye&plugins=postgresql)
+[![test](https://github.com/Osawejustice/hawkeye/actions/workflows/test.yml/badge.svg)](https://github.com/Osawejustice/hawkeye/actions/workflows/test.yml)
+
 This service is the source of truth for users, organizations, cameras, and recording metadata. It talks to [MediaMTX](https://github.com/bluenviron/mediamtx) over its Control API to project camera records onto live paths (RTSP ingest, HLS / WebRTC egress).
 
 ## What this version includes
@@ -10,9 +13,13 @@ This service is the source of truth for users, organizations, cameras, and recor
 - Current-user profile (`GET` / `PATCH /api/v1/users/me`)
 - Camera CRUD with organization ownership
 - MediaMTX path sync (add / replace / delete) behind a clean client interface
+- Recording index (`recording_segments`) + authenticated MP4 playback proxied from MediaMTX
+- Events (camera online/offline, new segments, camera created/deleted)
+- `cohi-worker` — polls MediaMTX playback + path status, upserts the index
 - PostgreSQL schema via golang-migrate (soft deletes, multi-tenancy-ready `organization_id`)
 - Health / readiness probes
-- Production multi-stage Dockerfile and local docker-compose (Postgres + MediaMTX + API)
+- Production multi-stage Dockerfile (api + worker targets) and local docker-compose (Postgres + MediaMTX + demo source + API + worker)
+- Railway one-click / GitHub auto-deploy (`railway.toml`, production secrets, Postgres)
 
 ## Requirements
 
@@ -30,8 +37,10 @@ docker compose up --build
 ```
 
 API: `http://localhost:8080`  
+Worker health: `http://localhost:8081/health`  
 Postgres: `localhost:5432` (`cohi` / `cohi` / `cohi`)  
-MediaMTX Control API: `http://localhost:9997`
+MediaMTX Control API: `http://localhost:9997`  
+Demo RTSP (test pattern): `rtsp://127.0.0.1:8554/demo`
 
 Migrations run automatically on API startup when `AUTO_MIGRATE=true`.
 
@@ -62,6 +71,8 @@ See [`.env.example`](.env.example). Important variables:
 | `JWT_ACCESS_TTL` / `JWT_REFRESH_TTL` | e.g. `15m` / `168h` |
 | `MEDIAMTX_API_URL` | Internal Control API (`http://mediamtx:9997` in compose) |
 | `MEDIAMTX_RTSP_URL` / `HLS` / `WEBRTC` | **Public** URLs returned to clients |
+| `MEDIAMTX_PLAYBACK_URL` | Internal Playback API used to stream recordings |
+| `INTERNAL_SERVICE_TOKEN` | Shared secret for `/internal/v1` (worker) |
 | `PORT` | Overrides `HTTP_PORT` (Railway-compatible) |
 
 ## API
@@ -117,6 +128,21 @@ Cameras belong to the caller's organization. Update/delete: owner **or** org adm
 | `DELETE` | `/api/v1/cameras/:id` | Soft-delete + remove MediaMTX path |
 | `POST` | `/api/v1/cameras/:id/sync` | Retry MediaMTX projection |
 | `GET` | `/api/v1/cameras/:id/status` | Live MediaMTX path status |
+| `GET` | `/api/v1/cameras/:id/recordings` | Segments for one camera |
+
+### Recordings
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/v1/recordings` | List (`camera_id`, `from`, `to`, `page`, `per_page`) |
+| `GET` | `/api/v1/recordings/:id` | Metadata |
+| `GET` | `/api/v1/recordings/:id/video` | Authenticated MP4 stream (proxied from MediaMTX playback) |
+
+### Events
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/v1/events` | List (`camera_id`, `type`, `page`, `per_page`) |
 
 ## End-to-end: Register → Login → Create Camera
 
@@ -152,9 +178,11 @@ curl -sS -X POST http://localhost:8080/api/v1/cameras \
     "rtsp_username": "admin",
     "rtsp_password": "secret",
     "enabled": true,
-    "recording_enabled": false
+    "recording_enabled": true
   }'
 ```
+
+The dashboard live view supports HLS and WebRTC (WHEP). Toggle them on the camera page.
 
 The response includes playback URLs under `data.stream`:
 
@@ -189,8 +217,11 @@ curl -sS -X POST http://localhost:8080/api/v1/auth/logout \
 ## Project layout
 
 ```
-cmd/api/                    entrypoint
+cmd/api/                    control-plane entrypoint
+cmd/worker/                 recording-worker entrypoint
 internal/app/               composition root
+internal/worker/            poll loop + internal API client
+internal/storage/           playback backend (MediaMTX now, R2 later)
 internal/auth/              password hashing + JWT
 internal/config/            environment loading
 internal/database/          GORM + golang-migrate
@@ -202,6 +233,9 @@ internal/repository/        persistence
 internal/service/           business logic
 migrations/                 SQL (golang-migrate)
 deployments/mediamtx.yml    local MediaMTX config
+deploy/railway.variables.env  production env paste for Railway
+railway.toml / railway.json Railway config-as-code
+.github/workflows/          CI (go test / vet)
 ```
 
 ## Auth design
@@ -211,16 +245,83 @@ deployments/mediamtx.yml    local MediaMTX config
 - Rotation on every refresh; reuse of a revoked token invalidates the whole family
 - Passwords: bcrypt cost 12
 
-## Railway
+## Deploy on Railway
 
-1. Provision PostgreSQL and set `DATABASE_URL`
-2. Set `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `APP_ENV=production`
-3. `AUTO_MIGRATE=true` (or run migrations in a release command)
-4. `PORT` is honored automatically
-5. Point `MEDIAMTX_API_URL` at the media-server service when it is deployed
+This repo is a Railway template in the same shape as a one-click Docker template: a production Dockerfile, `railway.toml` / `railway.json`, and PostgreSQL as the only datastore.
+
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https://github.com/Osawejustice/hawkeye&plugins=postgresql)
+
+PostgreSQL only. MySQL is not supported.
+
+### One-click
+
+1. Click **Deploy on Railway**.
+2. Railway provisions PostgreSQL and builds this Dockerfile (final stage = `api`).
+3. Open the `cohi-api` service → **Variables** and paste [deploy/railway.variables.env](deploy/railway.variables.env). Fill the three secrets:
+
+```bash
+openssl rand -base64 48   # JWT_ACCESS_SECRET
+openssl rand -base64 48   # JWT_REFRESH_SECRET
+openssl rand -base64 32   # INTERNAL_SERVICE_TOKEN
+```
+
+4. Set `DATABASE_URL` to the reference `${{Postgres.DATABASE_URL}}` (already in the paste file).
+5. Generate a public domain on the service. Health check is `GET /health`.
+6. After ~1 minute the API is up. Migrations run on boot (`AUTO_MIGRATE=true`).
+
+```bash
+curl https://<your-service>.up.railway.app/health
+curl -sS -X POST https://<your-service>.up.railway.app/api/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"ops@example.com","password":"correct-horse","name":"Ops"}'
+```
+
+### Deploy from this GitHub repo (recommended for Cohi)
+
+1. Push `main` to GitHub (this repository).
+2. Railway dashboard → **New Project** → **GitHub Repo** → `hawkeye`.
+3. Railway detects the Dockerfile and `railway.toml`.
+4. **+ New** → **Database** → **PostgreSQL**.
+5. On the API service, add the variables from [deploy/railway.variables.env](deploy/railway.variables.env).
+6. Enable a public domain. Subsequent pushes to `main` auto-deploy.
+
+MediaMTX is **not** part of this Railway service. Live ingest / playback stay on the local compose stack (or a later media-server service). In production, localhost MediaMTX URLs are disabled automatically so camera CRUD still works (`mtx_sync_status: skipped`).
+
+If you already have a Railway Postgres (or any Postgres 16), skip step 4 and set `DATABASE_URL` to that instance. Do not point this API at MySQL.
+
+## recording-worker
+
+Same module, separate binary (`cmd/worker`). It does **not** own the schema.
+
+Every poll interval it:
+
+1. Lists cameras from `GET /internal/v1/cameras`
+2. Reads MediaMTX path status and POSTs heartbeats (`is_online` / `last_seen_at` + events)
+3. Re-creates recording-enabled paths that disappeared after a MediaMTX restart
+4. Lists playback segments per recording-enabled camera and upserts `recording_segments`
+
+The API also re-projects every camera onto MediaMTX at boot (paths added via the Control API are in-memory).
+
+```bash
+docker compose up -d worker
+# or
+make run-worker
+```
+
+Internal routes require `X-Service-Token` / `Authorization: Bearer` matching `INTERNAL_SERVICE_TOKEN`.
+
+## Demo camera
+
+Compose publishes a test pattern to `rtsp://127.0.0.1:8554/demo`. Register, then create a camera with that RTSP URL and recording enabled. After ~1 minute the worker indexes a clip; play it from the web app or:
+
+```bash
+curl -L -H "Authorization: Bearer $ACCESS" \
+  http://localhost:8080/api/v1/recordings
+```
 
 ## Next services (not this repo)
 
-- `recording-worker` — motion / segment management, writes `recording_segments`
-- Object storage (Cloudflare R2) behind a storage interface
+- Motion detection inside recording-worker
+- Object storage (Cloudflare R2) behind `internal/storage` (interface already exists)
 - ONVIF discovery (manual RTSP is first)
+- Event fan-out (SSE / WebSocket / notifications)

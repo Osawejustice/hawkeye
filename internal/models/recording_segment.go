@@ -9,13 +9,19 @@ import (
 
 const (
 	StorageLocal = "local"
+	StorageMTX   = "mediamtx"
 	StorageR2    = "r2"
 	FormatFMP4   = "fmp4"
+	FormatMP4    = "mp4"
 	FormatMPEGTS = "mpegts"
+
+	TriggerContinuous = "continuous"
+	TriggerMotion     = "motion"
+	TriggerManual     = "manual"
 )
 
 // RecordingSegment is control-plane metadata for a recorded clip.
-// The bytes live in the storage layer (local FS now, R2 later).
+// The bytes live in the storage layer (MediaMTX playback now, R2 later).
 type RecordingSegment struct {
 	ID             uuid.UUID      `gorm:"type:uuid;primaryKey"`
 	OrganizationID uuid.UUID      `gorm:"type:uuid;not null;index"`
@@ -23,10 +29,12 @@ type RecordingSegment struct {
 	StartedAt      time.Time      `gorm:"not null"`
 	EndedAt        *time.Time     `gorm:"column:ended_at"`
 	DurationMS     *int64         `gorm:"column:duration_ms"`
-	StorageBackend string         `gorm:"size:32;not null;default:local"`
+	StorageBackend string         `gorm:"size:32;not null;default:mediamtx"`
 	StoragePath    string         `gorm:"type:text;not null"`
 	SizeBytes      *int64         `gorm:"column:size_bytes"`
 	Format         string         `gorm:"size:32;not null;default:fmp4"`
+	Trigger        string         `gorm:"size:32;not null;default:continuous"`
+	MTXPath        string         `gorm:"column:mtx_path;size:255;not null"`
 	CreatedAt      time.Time      `gorm:"not null"`
 	DeletedAt      gorm.DeletedAt `gorm:"index"`
 
@@ -40,10 +48,13 @@ func (r *RecordingSegment) BeforeCreate(tx *gorm.DB) error {
 		r.ID = uuid.New()
 	}
 	if r.StorageBackend == "" {
-		r.StorageBackend = StorageLocal
+		r.StorageBackend = StorageMTX
 	}
 	if r.Format == "" {
 		r.Format = FormatFMP4
+	}
+	if r.Trigger == "" {
+		r.Trigger = TriggerContinuous
 	}
 	return nil
 }

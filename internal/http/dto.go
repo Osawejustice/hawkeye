@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/cohi-hq/cohi-api/internal/media/mediamtx"
@@ -62,6 +63,7 @@ type CameraResponse struct {
 	MTXPath          string             `json:"mtx_path"`
 	MTXSyncStatus    string             `json:"mtx_sync_status"`
 	MTXSyncError     string             `json:"mtx_sync_error,omitempty"`
+	IsOnline         bool               `json:"is_online"`
 	LastSeenAt       *time.Time         `json:"last_seen_at,omitempty"`
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
@@ -125,6 +127,7 @@ func NewCameraResponse(cam *models.Camera, urls service.StreamURLs) CameraRespon
 		MTXPath:          cam.MTXPath,
 		MTXSyncStatus:    cam.MTXSyncStatus,
 		MTXSyncError:     cam.MTXSyncError,
+		IsOnline:         cam.IsOnline,
 		LastSeenAt:       cam.LastSeenAt,
 		CreatedAt:        cam.CreatedAt,
 		UpdatedAt:        cam.UpdatedAt,
@@ -138,4 +141,94 @@ func NewCameraResponse(cam *models.Camera, urls service.StreamURLs) CameraRespon
 		}
 	}
 	return out
+}
+
+type RecordingResponse struct {
+	ID             uuid.UUID  `json:"id"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+	CameraID       uuid.UUID  `json:"camera_id"`
+	CameraName     string     `json:"camera_name,omitempty"`
+	StartedAt      time.Time  `json:"started_at"`
+	EndedAt        *time.Time `json:"ended_at,omitempty"`
+	DurationMS     *int64     `json:"duration_ms,omitempty"`
+	StorageBackend string     `json:"storage_backend"`
+	Format         string     `json:"format"`
+	Trigger        string     `json:"trigger"`
+	MTXPath        string     `json:"mtx_path"`
+	SizeBytes      *int64     `json:"size_bytes,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	PlaybackURL    string     `json:"playback_url"`
+}
+
+func NewRecordingResponse(seg *models.RecordingSegment) RecordingResponse {
+	out := RecordingResponse{
+		ID:             seg.ID,
+		OrganizationID: seg.OrganizationID,
+		CameraID:       seg.CameraID,
+		StartedAt:      seg.StartedAt,
+		EndedAt:        seg.EndedAt,
+		DurationMS:     seg.DurationMS,
+		StorageBackend: seg.StorageBackend,
+		Format:         seg.Format,
+		Trigger:        seg.Trigger,
+		MTXPath:        seg.MTXPath,
+		SizeBytes:      seg.SizeBytes,
+		CreatedAt:      seg.CreatedAt,
+		PlaybackURL:    "/api/v1/recordings/" + seg.ID.String() + "/video",
+	}
+	if seg.Camera != nil {
+		out.CameraName = seg.Camera.Name
+	}
+	return out
+}
+
+type EventResponse struct {
+	ID             uuid.UUID       `json:"id"`
+	OrganizationID uuid.UUID       `json:"organization_id"`
+	CameraID       *uuid.UUID      `json:"camera_id,omitempty"`
+	CameraName     string          `json:"camera_name,omitempty"`
+	Type           string          `json:"type"`
+	Message        string          `json:"message"`
+	Metadata       json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+}
+
+func NewEventResponse(ev *models.Event) EventResponse {
+	out := EventResponse{
+		ID:             ev.ID,
+		OrganizationID: ev.OrganizationID,
+		CameraID:       ev.CameraID,
+		Type:           ev.Type,
+		Message:        ev.Message,
+		Metadata:       ev.Metadata,
+		CreatedAt:      ev.CreatedAt,
+	}
+	if ev.Camera != nil {
+		out.CameraName = ev.Camera.Name
+	}
+	return out
+}
+
+type InternalCameraResponse struct {
+	ID               uuid.UUID  `json:"id"`
+	OrganizationID   uuid.UUID  `json:"organization_id"`
+	Name             string     `json:"name"`
+	MTXPath          string     `json:"mtx_path"`
+	Enabled          bool       `json:"enabled"`
+	RecordingEnabled bool       `json:"recording_enabled"`
+	IsOnline         bool       `json:"is_online"`
+	LastSeenAt       *time.Time `json:"last_seen_at,omitempty"`
+}
+
+func NewInternalCameraResponse(cam *models.Camera) InternalCameraResponse {
+	return InternalCameraResponse{
+		ID:               cam.ID,
+		OrganizationID:   cam.OrganizationID,
+		Name:             cam.Name,
+		MTXPath:          cam.MTXPath,
+		Enabled:          cam.Enabled,
+		RecordingEnabled: cam.RecordingEnabled,
+		IsOnline:         cam.IsOnline,
+		LastSeenAt:       cam.LastSeenAt,
+	}
 }

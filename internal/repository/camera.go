@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 
+	"time"
+
 	"github.com/cohi-hq/cohi-api/internal/models"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -92,4 +94,42 @@ func (r *CameraRepository) UpdateSync(ctx context.Context, id uuid.UUID, status,
 			"mtx_sync_status": status,
 			"mtx_sync_error":  syncErr,
 		}).Error
+}
+
+func (r *CameraRepository) ListAll(ctx context.Context) ([]models.Camera, error) {
+	var cameras []models.Camera
+	err := r.db.WithContext(ctx).
+		Select("id", "organization_id", "name", "mtx_path", "enabled", "recording_enabled", "is_online", "last_seen_at", "mtx_sync_status").
+		Order("created_at ASC").
+		Find(&cameras).Error
+	return cameras, err
+}
+
+func (r *CameraRepository) ListForSync(ctx context.Context) ([]models.Camera, error) {
+	var cameras []models.Camera
+	err := r.db.WithContext(ctx).Order("created_at ASC").Find(&cameras).Error
+	return cameras, err
+}
+
+func (r *CameraRepository) GetByMTXPath(ctx context.Context, path string) (*models.Camera, error) {
+	var camera models.Camera
+	err := r.db.WithContext(ctx).First(&camera, "mtx_path = ?", path).Error
+	if err != nil {
+		return nil, err
+	}
+	return &camera, nil
+}
+
+func (r *CameraRepository) UpdateHeartbeat(ctx context.Context, id uuid.UUID, online bool, seenAt *time.Time) error {
+	updates := map[string]any{
+		"is_online":  online,
+		"updated_at": time.Now().UTC(),
+	}
+	if seenAt != nil {
+		updates["last_seen_at"] = seenAt
+	}
+	return r.db.WithContext(ctx).
+		Model(&models.Camera{}).
+		Where("id = ?", id).
+		Updates(updates).Error
 }

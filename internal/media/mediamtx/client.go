@@ -27,6 +27,8 @@ type Client interface {
 	DeletePath(ctx context.Context, name string) error
 	GetPathConfig(ctx context.Context, name string) (*PathConfig, error)
 	GetPathStatus(ctx context.Context, name string) (*PathStatus, error)
+	ListPathStatuses(ctx context.Context) ([]PathStatus, error)
+	ListPlayback(ctx context.Context, path string) ([]PlaybackSegment, error)
 }
 
 // PathConfig is the subset of MediaMTX PathConf we manage today.
@@ -48,6 +50,25 @@ type PathStatus struct {
 	Readers   int    `json:"readers"`
 }
 
+// PlaybackSegment is one recorded time span from the Playback API.
+type PlaybackSegment struct {
+	Start    time.Time     `json:"start"`
+	Duration time.Duration `json:"duration"`
+	URL      string        `json:"url"`
+}
+
+type playbackListEntry struct {
+	Start    string  `json:"start"`
+	Duration float64 `json:"duration"`
+	URL      string  `json:"url"`
+}
+
+type listEnvelope[T any] struct {
+	ItemCount int64 `json:"itemCount"`
+	PageCount int64 `json:"pageCount"`
+	Items     []T   `json:"items"`
+}
+
 type apiError struct {
 	Error  string `json:"error"`
 	Status string `json:"status"`
@@ -65,24 +86,30 @@ type runtimePath struct {
 }
 
 type HTTPClient struct {
-	enabled bool
-	baseURL string
-	user    string
-	pass    string
-	http    *http.Client
+	enabled     bool
+	baseURL     string
+	playbackURL string
+	user        string
+	pass        string
+	http        *http.Client
 }
 
 func New(cfg config.MediaMTXConfig) Client {
 	if !cfg.Enabled {
 		return &NoopClient{}
 	}
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 8 * time.Second
+	}
 	return &HTTPClient{
-		enabled: true,
-		baseURL: strings.TrimRight(cfg.APIURL, "/"),
-		user:    cfg.APIUser,
-		pass:    cfg.APIPass,
+		enabled:     true,
+		baseURL:     strings.TrimRight(cfg.APIURL, "/"),
+		playbackURL: strings.TrimRight(cfg.PlaybackURL, "/"),
+		user:        cfg.APIUser,
+		pass:        cfg.APIPass,
 		http: &http.Client{
-			Timeout: cfg.Timeout,
+			Timeout: timeout,
 			Transport: &http.Transport{
 				MaxIdleConns:        16,
 				IdleConnTimeout:     30 * time.Second,
@@ -144,15 +171,102 @@ func (c *HTTPClient) GetPathStatus(ctx context.Context, name string) (*PathStatu
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("decode path status: %w", err)
 	}
+	return pathStatusFromRuntime(raw), nil
+}
+
+func (c *HTTPClient) ListPathStatuses(ctx context.Context) ([]PathStatus, error) {
+	var out []PathStatus
+	page := 0
+	for {
+		body, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/v3/paths/list?page=%d&itemsPerPage=100", page), nil)
+		if err != nil {
+			return nil, err
+		}
+		var env listEnvelope[runtimePath]
+		if err := json.Unmarshal(body, &env); err != nil {
+			return nil, fmt.Errorf("decode path list: %w", err)
+		}
+		for _, raw := range env.Items {
+			out = append(out, *pathStatusFromRuntime(raw))
+		}
+		if page+1 >= int(env.PageCount) || len(env.Items) == 0 {
+			break
+		}
+		page++
+	}
+	return out, nil
+}
+
+func (c *HTTPClient) ListPlayback(ctx context.Context, path string) ([]PlaybackSegment, error) {
+	if c.playbackURL == "" {
+		return nil, nil
+	}
+	u, err := url.Parse(c.playbackURL + "/list")
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("path", path)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "cohi-api")
+	if c.user != "" {
+		req.SetBasicAuth(c.user, c.pass)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("mediamtx playback list: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode >= 300 {
+		return nil, &HTTPError{Status: resp.StatusCode, Message: strings.TrimSpace(string(body))}
+	}
+
+	var entries []playbackListEntry
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return nil, fmt.Errorf("decode playback list: %w", err)
+	}
+	out := make([]PlaybackSegment, 0, len(entries))
+	for _, e := range entries {
+		start, err := time.Parse(time.RFC3339Nano, e.Start)
+		if err != nil {
+			start, err = time.Parse(time.RFC3339, e.Start)
+			if err != nil {
+				continue
+			}
+		}
+		out = append(out, PlaybackSegment{
+			Start:    start.UTC(),
+			Duration: time.Duration(e.Duration * float64(time.Second)),
+			URL:      e.URL,
+		})
+	}
+	return out, nil
+}
+
+func pathStatusFromRuntime(raw runtimePath) *PathStatus {
 	return &PathStatus{
 		Name:      raw.Name,
 		Ready:     raw.Ready || raw.Online,
-		Online:    raw.Online,
+		Online:    raw.Online || raw.Ready,
 		Available: raw.Available,
 		ConfName:  raw.ConfName,
 		Tracks:    len(raw.Tracks2),
 		Readers:   len(raw.Readers),
-	}, nil
+	}
 }
 
 func (c *HTTPClient) do(ctx context.Context, method, path string, payload any) ([]byte, error) {
@@ -240,7 +354,7 @@ func PathConfigForCamera(sourceURL string, recordingEnabled bool) PathConfig {
 		Record:         recordingEnabled,
 	}
 	if recordingEnabled {
-		conf.RecordPath = "./recordings/%path/%Y-%m-%d_%H-%M-%S-%f"
+		conf.RecordPath = "/recordings/%path/%Y-%m-%d_%H-%M-%S-%f"
 	}
 	return conf
 }

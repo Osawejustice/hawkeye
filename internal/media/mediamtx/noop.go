@@ -31,3 +31,11 @@ func (n *NoopClient) GetPathConfig(ctx context.Context, name string) (*PathConfi
 func (n *NoopClient) GetPathStatus(ctx context.Context, name string) (*PathStatus, error) {
 	return &PathStatus{Name: name}, nil
 }
+
+func (n *NoopClient) ListPathStatuses(ctx context.Context) ([]PathStatus, error) {
+	return nil, nil
+}
+
+func (n *NoopClient) ListPlayback(ctx context.Context, path string) ([]PlaybackSegment, error) {
+	return nil, nil
+}

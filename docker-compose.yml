@@ -22,6 +22,7 @@ services:
     container_name: cohi-mediamtx
     volumes:
       - ./deployments/mediamtx.yml:/mediamtx.yml:ro
+      - recordings_data:/recordings
     ports:
       - "8554:8554"   # RTSP
       - "8888:8888"   # HLS
@@ -31,10 +32,47 @@ services:
       - "9997:9997"   # Control API
     restart: unless-stopped
 
+  demo:
+    image:  bluenviron/mediamtx:1-ffmpeg
+    container_name: cohi-demo-source
+    entrypoint: ["/usr/bin/ffmpeg"]
+    command:
+      - -hide_banner
+      - -loglevel
+      - error
+      - -re
+      - -f
+      - lavfi
+      - -i
+      - testsrc2=size=1280x720:rate=15
+      - -f
+      - lavfi
+      - -i
+      - sine=frequency=440:sample_rate=44100
+      - -c:v
+      - libx264
+      - -pix_fmt
+      - yuv420p
+      - -preset
+      - ultrafast
+      - -tune
+      - zerolatency
+      - -b:v
+      - 600k
+      - -c:a
+      - aac
+      - -f
+      - rtsp
+      - rtsp://mediamtx:8554/demo
+    depends_on:
+      - mediamtx
+    restart: unless-stopped
+
   api:
     build:
       context: .
       dockerfile: Dockerfile
+      target: api
     container_name: cohi-api
     environment:
       APP_ENV: development
@@ -42,11 +80,14 @@ services:
       HTTP_PORT: 8080
       JWT_ACCESS_SECRET: local-dev-access-secret-change-me-32b
       JWT_REFRESH_SECRET: local-dev-refresh-secret-change-me-32
+      INTERNAL_SERVICE_TOKEN: local-dev-internal-token
       DATABASE_URL: postgres://cohi:cohi@postgres:5432/cohi?sslmode=disable
       AUTO_MIGRATE: "true"
       MIGRATIONS_PATH: /app/migrations
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       MEDIAMTX_ENABLED: "true"
       MEDIAMTX_API_URL: http://mediamtx:9997
+      MEDIAMTX_PLAYBACK_URL: http://mediamtx:9996
       MEDIAMTX_RTSP_URL: rtsp://localhost:8554
       MEDIAMTX_HLS_URL: http://localhost:8888
       MEDIAMTX_WEBRTC_URL: http://localhost:8889
@@ -59,5 +100,31 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    container_name: cohi-worker
+    environment:
+      APP_ENV: development
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: 8081
+      COHI_API_URL: http://api:8080
+      INTERNAL_SERVICE_TOKEN: local-dev-internal-token
+      WORKER_POLL_INTERVAL: 10s
+      MEDIAMTX_ENABLED: "true"
+      MEDIAMTX_API_URL: http://mediamtx:9997
+      MEDIAMTX_PLAYBACK_URL: http://mediamtx:9996
+    ports:
+      - "8081:8081"
+    depends_on:
+      api:
+        condition: service_started
+      mediamtx:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  recordings_data:

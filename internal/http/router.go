@@ -13,12 +13,15 @@ import (
 )
 
 type Dependencies struct {
-	Config  *config.Config
-	Log     *slog.Logger
-	Auth    *service.AuthService
-	Users   *service.UserService
-	Cameras *service.CameraService
-	Health  *HealthHandler
+	Config     *config.Config
+	Log        *slog.Logger
+	Auth       *service.AuthService
+	Users      *service.UserService
+	Cameras    *service.CameraService
+	Recordings *service.RecordingService
+	Events     *service.EventService
+	Internal   *service.InternalService
+	Health     *HealthHandler
 }
 
 func NewRouter(deps Dependencies) *gin.Engine {
@@ -49,6 +52,9 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	authH := NewAuthHandler(deps.Auth)
 	userH := NewUserHandler(deps.Users)
 	camH := NewCameraHandler(deps.Cameras)
+	recH := NewRecordingHandler(deps.Recordings)
+	evH := NewEventHandler(deps.Events)
+	intH := NewInternalHandler(deps.Internal, deps.Recordings, deps.Cameras)
 
 	v1 := r.Group("/api/v1")
 	{
@@ -78,8 +84,27 @@ func NewRouter(deps Dependencies) *gin.Engine {
 				cameras.DELETE("/:id", camH.Delete)
 				cameras.POST("/:id/sync", camH.Sync)
 				cameras.GET("/:id/status", camH.Status)
+				cameras.GET("/:id/recordings", recH.ListForCamera)
 			}
+
+			recordings := protected.Group("/recordings")
+			{
+				recordings.GET("", recH.List)
+				recordings.GET("/:id", recH.Get)
+				recordings.GET("/:id/video", recH.Video)
+			}
+
+			protected.GET("/events", evH.List)
 		}
+	}
+
+	internal := r.Group("/internal/v1")
+	internal.Use(middleware.ServiceToken(deps.Config.InternalServiceToken))
+	{
+		internal.GET("/cameras", intH.ListCameras)
+		internal.POST("/cameras/:id/heartbeat", intH.Heartbeat)
+		internal.POST("/cameras/:id/sync", intH.SyncCamera)
+		internal.POST("/recordings/upsert", intH.UpsertRecording)
 	}
 
 	return r

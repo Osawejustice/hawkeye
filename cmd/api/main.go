@@ -57,6 +57,8 @@ func run() int {
 		"mediamtx", cfg.MediaMTX.Enabled,
 	)
 
+	go resyncMediaMTX(application)
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
@@ -77,4 +79,25 @@ func run() int {
 		return 1
 	}
 	return 0
+}
+
+func resyncMediaMTX(application *app.App) {
+	if application.Cameras == nil || !application.MTX.Enabled() {
+		return
+	}
+	delays := []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second}
+	for i, wait := range delays {
+		time.Sleep(wait)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		err := application.MTX.Health(ctx)
+		if err != nil {
+			cancel()
+			application.Log.Warn("mediamtx not ready for resync", "attempt", i+1, "err", err)
+			continue
+		}
+		application.Cameras.ResyncAll(ctx)
+		cancel()
+		return
+	}
+	application.Log.Warn("mediamtx resync skipped; control API never became healthy")
 }

@@ -12,10 +12,11 @@ import (
 	"github.com/cohi-hq/cohi-api/internal/media/mediamtx"
 	"github.com/cohi-hq/cohi-api/internal/repository"
 	"github.com/cohi-hq/cohi-api/internal/service"
+	"github.com/cohi-hq/cohi-api/internal/storage"
 	"gorm.io/gorm"
 )
 
-var Version = "0.1.0"
+var Version = "0.2.0"
 
 type App struct {
 	Config  *config.Config
@@ -23,6 +24,7 @@ type App struct {
 	DB      *gorm.DB
 	Handler http.Handler
 	MTX     mediamtx.Client
+	Cameras *service.CameraService
 }
 
 func New(cfg *config.Config, log *slog.Logger) (*App, error) {
@@ -41,21 +43,35 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	userRepo := repository.NewUserRepository(db)
 	tokenRepo := repository.NewTokenRepository(db)
 	cameraRepo := repository.NewCameraRepository(db)
+	recordingRepo := repository.NewRecordingRepository(db)
+	eventRepo := repository.NewEventRepository(db)
 
 	jwtMgr := auth.NewJWTManager(cfg.JWTAccessSecret, cfg.JWTAccessTTL, cfg.JWTIssuer)
 	mtx := mediamtx.New(cfg.MediaMTX)
+	store := storage.NewMediaMTXPlayback(
+		cfg.MediaMTX.PlaybackURL,
+		cfg.MediaMTX.APIUser,
+		cfg.MediaMTX.APIPass,
+		cfg.MediaMTX.Timeout,
+	)
 
 	authSvc := service.NewAuthService(db, userRepo, tokenRepo, jwtMgr, cfg.JWTRefreshTTL, cfg.JWTRefreshSecret, log)
 	userSvc := service.NewUserService(userRepo)
-	cameraSvc := service.NewCameraService(cameraRepo, mtx, cfg.MediaMTX, log)
+	eventSvc := service.NewEventService(eventRepo, log)
+	cameraSvc := service.NewCameraService(cameraRepo, mtx, cfg.MediaMTX, eventSvc, log)
+	recordingSvc := service.NewRecordingService(recordingRepo, cameraRepo, eventSvc, store, log)
+	internalSvc := service.NewInternalService(cameraRepo, eventSvc, log)
 
 	router := httpx.NewRouter(httpx.Dependencies{
-		Config:  cfg,
-		Log:     log,
-		Auth:    authSvc,
-		Users:   userSvc,
-		Cameras: cameraSvc,
-		Health:  httpx.NewHealthHandler(db, mtx, Version),
+		Config:     cfg,
+		Log:        log,
+		Auth:       authSvc,
+		Users:      userSvc,
+		Cameras:    cameraSvc,
+		Recordings: recordingSvc,
+		Events:     eventSvc,
+		Internal:   internalSvc,
+		Health:     httpx.NewHealthHandler(db, mtx, Version),
 	})
 
 	return &App{
@@ -64,6 +80,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 		DB:      db,
 		Handler: router,
 		MTX:     mtx,
+		Cameras: cameraSvc,
 	}, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/cohi-hq/cohi-api/internal/apierr"
 	"github.com/cohi-hq/cohi-api/internal/config"
@@ -72,6 +73,7 @@ type CameraService struct {
 	cameras *repository.CameraRepository
 	mtx     mediamtx.Client
 	mtxCfg  config.MediaMTXConfig
+	events  *EventService
 	log     *slog.Logger
 }
 
@@ -79,9 +81,10 @@ func NewCameraService(
 	cameras *repository.CameraRepository,
 	mtx mediamtx.Client,
 	mtxCfg config.MediaMTXConfig,
+	events *EventService,
 	log *slog.Logger,
 ) *CameraService {
-	return &CameraService{cameras: cameras, mtx: mtx, mtxCfg: mtxCfg, log: log}
+	return &CameraService{cameras: cameras, mtx: mtx, mtxCfg: mtxCfg, events: events, log: log}
 }
 
 func (s *CameraService) Create(ctx context.Context, actor Actor, in CreateCameraInput) (*models.Camera, error) {
@@ -133,6 +136,10 @@ func (s *CameraService) Create(ctx context.Context, actor Actor, in CreateCamera
 	}
 
 	s.syncPath(ctx, camera)
+	if s.events != nil {
+		camID := camera.ID
+		s.events.Emit(ctx, actor.OrgID, &camID, "camera.created", "Camera "+camera.Name+" added", nil)
+	}
 	s.log.Info("camera created", "camera_id", camera.ID, "org_id", actor.OrgID, "mtx_path", camera.MTXPath)
 	return camera, nil
 }
@@ -248,6 +255,10 @@ func (s *CameraService) Delete(ctx context.Context, actor Actor, id uuid.UUID) e
 	if err := s.cameras.Delete(ctx, camera); err != nil {
 		return apierr.ErrInternal.With(err)
 	}
+	if s.events != nil {
+		camID := camera.ID
+		s.events.Emit(ctx, actor.OrgID, &camID, "camera.deleted", "Camera "+camera.Name+" removed", nil)
+	}
 	s.log.Info("camera deleted", "camera_id", camera.ID)
 	return nil
 }
@@ -261,6 +272,33 @@ func (s *CameraService) Sync(ctx context.Context, actor Actor, id uuid.UUID) (*m
 	return camera, nil
 }
 
+func (s *CameraService) SyncByID(ctx context.Context, id uuid.UUID) (*models.Camera, error) {
+	camera, err := s.cameras.GetByID(ctx, id)
+	if err != nil {
+		if repository.IsNotFound(err) {
+			return nil, apierr.ErrNotFound.WithMessage("camera not found")
+		}
+		return nil, apierr.ErrInternal.With(err)
+	}
+	s.syncPath(ctx, camera)
+	return camera, nil
+}
+
+func (s *CameraService) ResyncAll(ctx context.Context) {
+	if !s.mtx.Enabled() {
+		return
+	}
+	cameras, err := s.cameras.ListForSync(ctx)
+	if err != nil {
+		s.log.Warn("mediamtx resync list failed", "err", err)
+		return
+	}
+	for i := range cameras {
+		s.syncPath(ctx, &cameras[i])
+	}
+	s.log.Info("mediamtx resync complete", "cameras", len(cameras))
+}
+
 func (s *CameraService) Status(ctx context.Context, actor Actor, id uuid.UUID) (*models.Camera, *mediamtx.PathStatus, error) {
 	camera, err := s.loadOwned(ctx, actor, id)
 	if err != nil {
@@ -272,6 +310,16 @@ func (s *CameraService) Status(ctx context.Context, actor Actor, id uuid.UUID) (
 	st, err := s.mtx.GetPathStatus(ctx, camera.MTXPath)
 	if err != nil {
 		return camera, nil, err
+	}
+	online := st != nil && (st.Ready || st.Online)
+	if online {
+		now := time.Now().UTC()
+		_ = s.cameras.UpdateHeartbeat(ctx, camera.ID, true, &now)
+		camera.IsOnline = true
+		camera.LastSeenAt = &now
+	} else if camera.IsOnline {
+		_ = s.cameras.UpdateHeartbeat(ctx, camera.ID, false, camera.LastSeenAt)
+		camera.IsOnline = false
 	}
 	return camera, st, nil
 }

@@ -1,14 +1,17 @@
 APP        := cohi-api
+WORKER     := cohi-worker
 MODULE     := github.com/cohi-hq/cohi-api
 GO         ?= go
 BIN        := bin/$(APP)
+WORKER_BIN := bin/$(WORKER)
 
-.PHONY: help run build test vet tidy migrate-up migrate-down docker-up docker-down docker-build air
+.PHONY: help run run-worker build test vet tidy migrate-up migrate-down docker-up docker-down docker-build air
 
 help:
 	@echo "Targets:"
 	@echo "  run            go run ./cmd/api (requires Postgres)"
-	@echo "  build          compile to bin/cohi-api"
+	@echo "  run-worker     go run ./cmd/worker"
+	@echo "  build          compile api + worker to bin/"
 	@echo "  test           go test ./..."
 	@echo "  vet            go vet ./..."
 	@echo "  tidy           go mod tidy"
@@ -20,9 +23,13 @@ help:
 run:
 	$(GO) run ./cmd/api
 
+run-worker:
+	$(GO) run ./cmd/worker
+
 build:
 	mkdir -p bin
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o $(BIN) ./cmd/api
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o $(WORKER_BIN) ./cmd/worker
 
 test:
 	$(GO) test ./...

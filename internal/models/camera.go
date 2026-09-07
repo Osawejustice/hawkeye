@@ -30,6 +30,7 @@ type Camera struct {
 	MTXPath          string         `gorm:"column:mtx_path;size:255;not null"`
 	MTXSyncStatus    string         `gorm:"column:mtx_sync_status;size:32;not null;default:pending"`
 	MTXSyncError     string         `gorm:"column:mtx_sync_error;type:text"`
+	IsOnline         bool           `gorm:"column:is_online;not null;default:false"`
 	LastSeenAt       *time.Time     `gorm:"column:last_seen_at"`
 	CreatedAt        time.Time      `gorm:"not null"`
 	UpdatedAt        time.Time      `gorm:"not null"`
