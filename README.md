@@ -244,27 +244,31 @@ railway.toml / railway.json Railway config-as-code
 - Rotation on every refresh; reuse of a revoked token invalidates the whole family
 - Passwords: bcrypt cost 12
 
-## Deploy on Railway
+## Deploy on Railway (fresh project)
 
-The old **Deploy on Railway** button with `plugins=postgresql` only created the database. That is expected: a Postgres plugin is not the API. The full stack is **four services in one project**.
+Do **not** start from “Deploy PostgreSQL” or a `plugins=postgresql` button. That only creates the database. Create an **empty project**, then add all four services onto the same canvas.
 
 | Service | Source | Role |
 | --- | --- | --- |
-| **Postgres** | Railway database | metadata (you already have this in `upbeat-success`) |
-| **cohi-api** | this GitHub repo / `Dockerfile` | control plane (auth, cameras, recordings index) |
-| **mediamtx** | this repo / `Dockerfile.mediamtx` | live + recording |
-| **cohi-worker** | this repo / `Dockerfile.worker` | indexes segments, heartbeats |
+| **Postgres** | Railway → Database | metadata |
+| **cohi-api** | GitHub `hawkeye` / `Dockerfile` | control plane |
+| **mediamtx** | same repo / `Dockerfile.mediamtx` | live + recording |
+| **cohi-worker** | same repo / `Dockerfile.worker` | indexes segments |
 
-PostgreSQL only. MySQL is not supported.
+PostgreSQL only. MySQL is not supported. Delete the old `upbeat-success` project if you no longer need it (trial usage).
 
-### Right now: add the API to the existing Postgres project
+### 1. Empty project + Postgres
 
-You already have **Postgres Online** in `upbeat-success` / `production`. Stay in that project. Do **not** create another database.
+1. [railway.com/new](https://railway.com/new) → **Empty project**.
+2. Name it `cohi` (or anything except a database-only template).
+3. **+ New → Database → PostgreSQL**. Wait until it is **Online**. Leave it unexposed.
 
-1. Click **+ New** (left rail) → **GitHub Repo** → `Osawejustice/hawkeye` (`main`).
-2. Rename the new service to `cohi-api`.
-3. **Settings → Build**: Dockerfile path `Dockerfile` (default). Railway uses the final `api` stage.
-4. **Variables → Raw Editor**, paste [deploy/railway.variables.env](deploy/railway.variables.env) after filling:
+### 2. API (required for tonight)
+
+1. **+ New → GitHub Repo** → `Osawejustice/hawkeye` (`main`).
+2. Rename the service to **`cohi-api`**.
+3. Build: Dockerfile path `Dockerfile` (default, final stage is `api`).
+4. **Variables → Raw Editor** — paste [deploy/railway.variables.env](deploy/railway.variables.env) with the three secrets filled:
 
 ```bash
 openssl rand -base64 48   # JWT_ACCESS_SECRET
@@ -272,9 +276,9 @@ openssl rand -base64 48   # JWT_REFRESH_SECRET
 openssl rand -base64 32   # INTERNAL_SERVICE_TOKEN
 ```
 
-   `DATABASE_URL=${{Postgres.DATABASE_URL}}` must stay as a **reference** (the Postgres service on your canvas is already named `Postgres`).
+   Keep `DATABASE_URL=${{Postgres.DATABASE_URL}}` as a reference. Railway’s Postgres service is named `Postgres`.
 5. **Settings → Networking → Generate Domain**.
-6. Deploy. `GET /health` is the probe. Migrations run on boot.
+6. Deploy. Probe is `GET /health`. Migrations run on boot.
 
 ```bash
 curl https://<cohi-api>.up.railway.app/health
@@ -283,30 +287,24 @@ curl -sS -X POST https://<cohi-api>.up.railway.app/api/v1/auth/register \
   -d '{"email":"ops@example.com","password":"correct-horse","name":"Ops"}'
 ```
 
-Until MediaMTX is added, leave `MEDIAMTX_ENABLED=false`. Camera CRUD still works (`mtx_sync_status: skipped`).
+Leave `MEDIAMTX_ENABLED=false` until step 3. Camera CRUD still works.
 
-### Rest of infra (same project)
+### 3. MediaMTX + worker (full infra)
 
-**MediaMTX**
+**mediamtx**
 
-1. **+ New → GitHub Repo** → same `hawkeye` repo. Name the service `mediamtx`.
+1. **+ New → GitHub Repo** → same `hawkeye` repo. Name it **`mediamtx`**.
 2. **Settings → Build → Dockerfile path** = `Dockerfile.mediamtx`.
-3. **Settings → Volumes** → mount `recordings-data` at `/recordings`.
-4. On `cohi-api`, set `MEDIAMTX_ENABLED=true` and the `MEDIAMTX_*` URLs in `deploy/railway.variables.env`.
+3. **Settings → Volumes** → add volume, mount `/recordings`.
+4. On `cohi-api`, set `MEDIAMTX_ENABLED=true` and uncomment the `MEDIAMTX_*` lines in `deploy/railway.variables.env`. Redeploy the API.
 
-**Worker**
+**cohi-worker**
 
-1. **+ New → GitHub Repo** → same repo. Name it `cohi-worker`.
-2. **Dockerfile path** = `Dockerfile.worker`.
+1. **+ New → GitHub Repo** → same repo. Name it **`cohi-worker`**.
+2. Dockerfile path = `Dockerfile.worker`.
 3. Paste [deploy/railway.worker.variables.env](deploy/railway.worker.variables.env). Use the **same** `INTERNAL_SERVICE_TOKEN` as the API.
 
-The graph also lives in [`.railway/railway.ts`](.railway/railway.ts) so the whole environment can be planned with `railway config plan` / `apply` after `railway link`.
-
-### New empty project (from scratch)
-
-1. Railway → **New Project → Empty project** (or GitHub repo — not “PostgreSQL” alone).
-2. **+ New → Database → PostgreSQL**.
-3. Follow “add the API” above.
+The same graph is in [`.railway/railway.ts`](.railway/railway.ts) (`railway link` → `railway config apply`) if you prefer CLI over the canvas.
 
 ## recording-worker
 
